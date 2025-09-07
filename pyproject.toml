@@ -26,3 +26,8 @@ dependencies = []
 
 [tool.setuptools.packages.find]
 include = ["pyeasyexperiment*"]
+
+[project.optional-dependencies]
+mlflow = [
+    "mlflow>=2.0.0",
+]
