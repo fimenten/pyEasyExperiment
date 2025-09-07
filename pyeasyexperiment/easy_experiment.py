@@ -94,7 +94,7 @@ class EasyExperiment2(EasyExperiment):
             commit_message = self.experiment_id
         git_commit_all_unstaged(commit_message)
         return super().start_experiment(filepath_list)
-    
+
 if __name__ == "__main__":
     # a = EasyExperiment("")
     # a.start_experiment(__file__)
