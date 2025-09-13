@@ -26,16 +26,21 @@ def get_git_hash():
 
 
 def git_commit_all_unstaged(commit_message,experimentBranch = "experiments"):
-    subprocess.run(["git", "checkout", experimentBranch], check=True)
-    # 変更されたがステージングされていないファイルを検出
+    # 現在の作業ディレクトリの状況をすべて検出
     result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-    changed_files = [line[3:] for line in result.stdout.splitlines() if line.startswith("??") or line.startswith(" M")]
-
-    # ステージングする
-    if changed_files:
-        subprocess.run(["git", "add"] + changed_files, check=True)
-
-        # コミットメッセージ付きでコミット
+    
+    if result.stdout.strip():
+        # 1. 現在の変更を一時保存
+        subprocess.run(["git", "stash", "push", "-u", "-m", f"temp stash for {commit_message}"], check=True)
+        
+        # 2. experiments ブランチに切り替え
+        subprocess.run(["git", "checkout", experimentBranch], check=True)
+        
+        # 3. stash した変更を適用
+        subprocess.run(["git", "stash", "pop"], check=True)
+        
+        # 4. すべての変更をステージングしてコミット
+        subprocess.run(["git", "add", "-A"], check=True)
         subprocess.run(["git", "commit", "-m", commit_message], check=True)
     else:
         print("ステージングするファイルがありません。")
