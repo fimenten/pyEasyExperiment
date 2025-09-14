@@ -126,7 +126,10 @@ class _MLflowMixin:
 
         # Binary-like (bytes/bytearray/file-like)
         if filename is None:
-            raise ValueError("filename is required when logging binary or file-like data")
+            filename = str(uuid.uuid4())
+            raise Warning(f"filename is required when logging binary or file-like data, named {filename}")
+
+
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = os.path.join(tmpdir, filename)
