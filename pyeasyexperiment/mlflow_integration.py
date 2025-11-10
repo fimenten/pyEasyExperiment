@@ -6,6 +6,12 @@ from typing import Dict, Optional, Union, IO, List
 import tempfile
 import sys
 import shlex
+import uuid
+
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None  # type: ignore
 
 try:
     import mlflow
@@ -20,7 +26,6 @@ from .easy_experiment import (
     get_git_hash,
     git_commit_all_unstaged,
 )
-import uuid
 
 
 class _MLflowMixin:
@@ -117,8 +122,8 @@ class _MLflowMixin:
                 raise TypeError("path_or_data must be a path, bytes, bytearray, or binary file-like object")
             mlflow.log_artifact(tmp_path, artifact_path=artifact_path)
 
-    def start_experiment(self, filepath_list=[]):  # type: ignore[override]
-        exp_id = super().start_experiment(filepath_list)
+    def start_experiment(self, filepath_list: List[str] | None = None):  # type: ignore[override]
+        exp_id = super().start_experiment(filepath_list or [])
         self.start_mlflow_run()
         self.record_run_command()
         return exp_id
@@ -128,21 +133,31 @@ class _MLflowMixin:
         self.log_params(d)
 
     def record_run_command(self, command: Optional[str] = None, env_keys: Optional[List[str]] = None) -> Optional[str]:
-        cmd = self._build_invocation_command(command)
-        if not cmd:
+        cwd = os.getcwd()
+        cmdline_list = self._resolve_cmdline_list()
+        cmd_shell = command or self._build_invocation_command_from_list(cmdline_list)
+        if not cmd_shell:
             return None
+        one_liner = f"cd {shlex.quote(cwd)} && {cmd_shell}"
         try:
             if not getattr(self, "_cloud_only", False) and hasattr(self, "save_dir"):
                 p = pathlib.Path(self.save_dir) / "run_command.txt"
-                p.write_text(cmd, encoding="utf-8")
+                p.write_text(one_liner, encoding="utf-8")
         except Exception:
             pass
         try:
-            self.log_params({"run.command": cmd})
+            self.log_params(
+                {
+                    "run.cwd": cwd,
+                    "run.command": one_liner,
+                    "run.exe": sys.executable or "",
+                    "run.argv0": sys.argv[0] if sys.argv else "",
+                }
+            )
         except Exception:
             pass
         try:
-            self.log_artifact(cmd.encode("utf-8"), filename="run_command.txt")
+            self.log_artifact(one_liner.encode("utf-8"), filename="run_command.txt")
         except Exception:
             pass
         if env_keys:
@@ -155,23 +170,36 @@ class _MLflowMixin:
                 self.log_artifact(env_txt, filename="run_env_subset.txt")
             except Exception:
                 pass
-        return cmd
+        return one_liner
 
-    def _build_invocation_command(self, explicit_command: Optional[str]) -> str:
-        if explicit_command:
-            return explicit_command
+    def _resolve_cmdline_list(self) -> List[str]:
+        if psutil is not None:
+            try:
+                cl = psutil.Process().cmdline()  # type: ignore[attr-defined]
+                if cl:
+                    return cl
+            except Exception:
+                pass
+        exe = sys.executable or "python"
+        return [exe] + list(sys.argv or [])
+
+    def _build_invocation_command_from_list(self, cmdline_list: List[str]) -> str:
         try:
-            exe = os.environ.get("PYEASYEXPERIMENT_CMD_EXE") or sys.executable or "python"
             pre = os.environ.get("PYEASYEXPERIMENT_CMD_PREFIX", "")
             argv_env = os.environ.get("PYEASYEXPERIMENT_CMD")
             if argv_env:
                 return argv_env
-            parts = [shlex.quote(exe)] + [shlex.quote(a) for a in sys.argv]
+            parts = [shlex.quote(p) for p in cmdline_list]
             if pre:
                 return f"{pre} {' '.join(parts)}"
             return " ".join(parts)
         except Exception:
             return ""
+
+    def _build_invocation_command(self, explicit_command: Optional[str]) -> str:
+        if explicit_command:
+            return explicit_command
+        return self._build_invocation_command_from_list(self._resolve_cmdline_list())
 
     def _MLflowMixin__mlflow_is_on(self) -> bool:
         return self._mlflow_enabled and self._mlflow_run_active and _MLFLOW_AVAILABLE
@@ -204,7 +232,7 @@ class MLflowExperiment2(_MLflowMixin, EasyExperiment2):
         self._mlflow_run_active = False
         self._mlflow_run_id = None
 
-    def start_experiment(self, filepath_list=[], commit_message: Optional[str] = None):  # type: ignore[override]
+    def start_experiment(self, filepath_list: List[str] | None = None, commit_message: Optional[str] = None):  # type: ignore[override]
         if commit_message is None:
             commit_message = str(self.experiment_id)
         try:
